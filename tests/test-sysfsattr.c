@@ -15,55 +15,123 @@
 
 #include <gudev/gudev.h>
 
+typedef struct {
+	UMockdevTestbed *testbed;
+} Fixture;
+
 static void
-test_uncached_sysfs_attr (void)
+fixture_setup (Fixture *f, G_GNUC_UNUSED const void *data)
 {
-	/* create test bed */
-	UMockdevTestbed *testbed = umockdev_testbed_new ();
+	f->testbed = umockdev_testbed_new ();
 
-	/* Relies on a test bed having been set up */
 	g_assert (umockdev_in_mock_environment ());
+}
 
-	umockdev_testbed_add_device (testbed, "platform", "dev1", NULL,
-				     "dytc_lapmode", "1", "console", "Y\n", NULL,
-				     "ID_MODEL", "KoolGadget", NULL);
-
-	/* Check the number of items in GUdevClient */
-	const gchar *subsystems[] = { "platform", NULL};
-	GUdevClient *client = g_udev_client_new (subsystems);
+static GUdevDevice*
+create_single_dev (Fixture *f, const char *device)
+{
+	g_autoptr(GError) error = NULL;
+	g_autoptr(GUdevClient) client = NULL;
+	g_autolist(GUdevDevice) devices;
 	GUdevDevice *dev;
-	g_autofree char *lapmode_path = NULL;
-	g_autofree char *console_path = NULL;
+
+	if (!umockdev_testbed_add_from_string (f->testbed, device, &error))
+		g_error ("Failed to add test device: %s", error->message);
+
+	client = g_udev_client_new (NULL);
+
+	devices = g_udev_client_query_by_subsystem (client, NULL);
+	g_assert_cmpint (g_list_length (devices), ==, 1);
+
+	dev = devices->data;
+	devices = g_list_delete_link (devices, devices);
+
+	return dev;
+}
+
+static void
+fixture_teardown (Fixture *f, G_GNUC_UNUSED const void *data)
+{
+	g_clear_object (&f->testbed);
+}
+
+static void
+write_sysfs_attr (GUdevDevice *dev, const char *attr, const char *value)
+{
+	g_autofree char *path = NULL;
 	FILE *sysfsfp;
 
-	GList *devices = g_udev_client_query_by_subsystem (client, NULL);
-	g_assert_cmpint (g_list_length (devices), ==, 1);
-	dev = devices->data;
-	lapmode_path = g_build_filename (g_udev_device_get_sysfs_path (dev), "dytc_lapmode", NULL);
+	path = g_build_filename (g_udev_device_get_sysfs_path (dev), attr, NULL);
+	sysfsfp = fopen (path, "w");
+	fwrite (value, strlen(value), 1, sysfsfp);
+	fclose (sysfsfp);
+}
+
+static void
+test_uncached_sysfs_attr (Fixture *f, G_GNUC_UNUSED const void *data)
+{
+	g_autoptr(GUdevDevice) dev = NULL;
+
+	dev = create_single_dev (f, "P: /devices/dev1\n"
+	                            "E: SUBSYSTEM=platform\n"
+	                            "A: dytc_lapmode=1\n"
+	                            "A: console=Y\\n\n"
+	                            "E: ID_MODEL=KoolGadget");
+
 	/* First access */
 	g_assert_true (g_udev_device_get_sysfs_attr_as_boolean (dev, "dytc_lapmode"));
-	sysfsfp = fopen (lapmode_path, "w");
-	fprintf (sysfsfp, "%s\n", "0");
-	fclose (sysfsfp);
+	g_assert_cmpstr (g_udev_device_get_sysfs_attr (dev, "dytc_lapmode"), ==, "1");
+	write_sysfs_attr (dev, "dytc_lapmode", "0\n");
 	/* This is cached */
 	g_assert_true (g_udev_device_get_sysfs_attr_as_boolean (dev, "dytc_lapmode"));
 	/* This is uncached, and updates the cache */
 	g_assert_false (g_udev_device_get_sysfs_attr_as_boolean_uncached (dev, "dytc_lapmode"));
 	g_assert_false (g_udev_device_get_sysfs_attr_as_boolean (dev, "dytc_lapmode"));
+	g_assert_cmpstr (g_udev_device_get_sysfs_attr (dev, "dytc_lapmode"), ==, "0");
 
 	/* Test N/Y and trailing linefeeds */
 	g_assert_true (g_udev_device_get_sysfs_attr_as_boolean (dev, "console"));
-	console_path = g_build_filename (g_udev_device_get_sysfs_path (dev), "console", NULL);
-	sysfsfp = fopen (console_path, "w");
-	fprintf (sysfsfp, "%s\n", "N");
-	fclose (sysfsfp);
+	write_sysfs_attr (dev, "console", "N\n");
 	g_assert_false (g_udev_device_get_sysfs_attr_as_boolean_uncached (dev, "console"));
-	sysfsfp = fopen (console_path, "w");
-	fprintf (sysfsfp, "%s\n", "Y");
-	fclose (sysfsfp);
+	write_sysfs_attr (dev, "console", "Y");
 	g_assert_true (g_udev_device_get_sysfs_attr_as_boolean_uncached (dev, "console"));
+}
 
-	g_list_free_full (devices, g_object_unref);
+static void
+test_sysfs_attr_keys (Fixture *f, G_GNUC_UNUSED const void *data)
+{
+	const char *expected[] = { "console", "dytc_lapmode", "subsystem", "uevent", NULL };
+	g_autoptr(GUdevDevice) dev = NULL;
+
+	dev = create_single_dev (f, "P: /devices/dev1\n"
+	                            "E: SUBSYSTEM=platform\n"
+	                            "A: dytc_lapmode=1\n"
+	                            "A: console=Y\\n\n"
+	                            "E: ID_MODEL=KoolGadget");
+
+	g_assert_cmpstrv (g_udev_device_get_sysfs_attr_keys (dev), expected);
+}
+
+static void
+test_sysfs_attr_as_strv (Fixture *f, G_GNUC_UNUSED const void *data)
+{
+	const char *expected[] = { "1", "2", "3", "4", "5", "6", NULL };
+	const char *empty[] = { NULL };
+	g_autoptr(GUdevDevice) dev = NULL;
+
+	dev = create_single_dev (f, "P: /devices/dev1\n"
+	                            "E: SUBSYSTEM=platform\n"
+	                            "A: test=1\\n2 3\\r4\\t5 \\t\\n6\n"
+	                            "E: ID_MODEL=KoolGadget");
+
+	/* Reading gives the expected result, even after updating the file */
+	g_assert_cmpstrv (g_udev_device_get_sysfs_attr_as_strv (dev, "test"), expected);
+	write_sysfs_attr (dev, "test", "\n");
+	g_assert_cmpstrv (g_udev_device_get_sysfs_attr_as_strv (dev, "test"), expected);
+
+	/* _uncached variant gets the new content and updates the cache */
+	g_assert_cmpstrv (g_udev_device_get_sysfs_attr_as_strv_uncached (dev, "test"), empty);
+	g_assert_cmpstrv (g_udev_device_get_sysfs_attr_as_strv (dev, "test"), empty);
 }
 
 int main(int argc, char **argv)
@@ -71,7 +139,20 @@ int main(int argc, char **argv)
 	setlocale (LC_ALL, NULL);
 	g_test_init (&argc, &argv, NULL);
 
-	g_test_add_func ("/gudev/uncached_sysfs_attr", test_uncached_sysfs_attr);
+	g_test_add ("/gudev/uncached_sysfs_attr", Fixture, NULL,
+	            fixture_setup,
+	            test_uncached_sysfs_attr,
+	            fixture_teardown);
+
+	g_test_add ("/gudev/sysfs_attr_keys", Fixture, NULL,
+	            fixture_setup,
+	            test_sysfs_attr_keys,
+	            fixture_teardown);
+
+	g_test_add ("/gudev/sysfs_attr_as_strv", Fixture, NULL,
+	            fixture_setup,
+	            test_sysfs_attr_as_strv,
+	            fixture_teardown);
 
 	return g_test_run ();
 }

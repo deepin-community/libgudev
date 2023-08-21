@@ -76,9 +76,9 @@ struct _GUdevDevicePrivate
   gchar **property_keys;
   gchar **sysfs_attr_keys;
   gchar **tags;
+  gchar **current_tags;
   GHashTable *prop_strvs;
   GHashTable *sysfs_attr_strvs;
-  GHashTable *sysfs_attr;
 };
 
 G_DEFINE_TYPE_WITH_CODE (GUdevDevice, g_udev_device, G_TYPE_OBJECT, G_ADD_PRIVATE(GUdevDevice))
@@ -92,6 +92,7 @@ g_udev_device_finalize (GObject *object)
   g_strfreev (device->priv->property_keys);
   g_strfreev (device->priv->sysfs_attr_keys);
   g_strfreev (device->priv->tags);
+  g_strfreev (device->priv->current_tags);
 
   if (device->priv->udevice != NULL)
     udev_device_unref (device->priv->udevice);
@@ -101,9 +102,6 @@ g_udev_device_finalize (GObject *object)
 
   if (device->priv->sysfs_attr_strvs != NULL)
     g_hash_table_unref (device->priv->sysfs_attr_strvs);
-
-  if (device->priv->sysfs_attr != NULL)
-    g_hash_table_unref (device->priv->sysfs_attr);
 
   if (G_OBJECT_CLASS (g_udev_device_parent_class)->finalize != NULL)
     (* G_OBJECT_CLASS (g_udev_device_parent_class)->finalize) (object);
@@ -123,6 +121,35 @@ g_udev_device_init (GUdevDevice *device)
   device->priv = g_udev_device_get_instance_private (device);
 }
 
+static void
+fetch_get_tags (GUdevDevice *device)
+{
+  struct udev_list_entry *l;
+  GPtrArray *p;
+
+  p = g_ptr_array_new ();
+  for (l = udev_device_get_tags_list_entry (device->priv->udevice); l != NULL; l = udev_list_entry_get_next (l))
+    {
+      g_ptr_array_add (p, g_strdup (udev_list_entry_get_name (l)));
+    }
+  g_ptr_array_add (p, NULL);
+  device->priv->tags = (gchar **) g_ptr_array_free (p, FALSE);
+}
+
+static void
+fetch_current_tags (GUdevDevice *device)
+{
+  struct udev_list_entry *l;
+  GPtrArray *p;
+
+  p = g_ptr_array_new ();
+  for (l = udev_device_get_current_tags_list_entry (device->priv->udevice); l != NULL; l = udev_list_entry_get_next (l))
+    {
+      g_ptr_array_add (p, g_strdup (udev_list_entry_get_name (l)));
+    }
+  g_ptr_array_add (p, NULL);
+  device->priv->current_tags = (gchar **) g_ptr_array_free (p, FALSE);
+}
 
 GUdevDevice *
 _g_udev_device_new (struct udev_device *udevice)
@@ -131,10 +158,9 @@ _g_udev_device_new (struct udev_device *udevice)
 
   device =  G_UDEV_DEVICE (g_object_new (G_UDEV_TYPE_DEVICE, NULL));
   device->priv->udevice = udev_device_ref (udevice);
-  device->priv->sysfs_attr = g_hash_table_new_full (g_str_hash,
-                                                    g_str_equal,
-                                                    g_free,
-                                                    g_free);
+
+  fetch_get_tags (device);
+  fetch_current_tags (device);
 
   return device;
 }
@@ -773,14 +799,8 @@ const gchar *
 g_udev_device_get_sysfs_attr (GUdevDevice  *device,
                               const gchar  *name)
 {
-  const char *attr;
-
   g_return_val_if_fail (G_UDEV_IS_DEVICE (device), NULL);
   g_return_val_if_fail (name != NULL, NULL);
-
-  attr = g_hash_table_lookup (device->priv->sysfs_attr, name);
-  if (attr)
-    return attr;
   return udev_device_get_sysattr_value (device->priv->udevice, name);
 }
 
@@ -1004,6 +1024,8 @@ out:
  * functions.
  *
  * Returns: %TRUE only if the value for @key exist.
+ *
+ * Since: 234
  */
 gboolean
 g_udev_device_has_sysfs_attr_uncached (GUdevDevice  *device,
@@ -1022,26 +1044,23 @@ g_udev_device_has_sysfs_attr_uncached (GUdevDevice  *device,
  * Look up the sysfs attribute with @name on @device. This function does
  * blocking I/O, and updates the sysfs attributes cache.
  *
+ * Before version 238 the uncached getters would not strip trailing newlines.
+ *
  * Returns: (nullable): The value of the sysfs attribute or %NULL if
  * there is no such attribute. Do not free this string, it is owned by
  * @device.
+ *
+ * Since: 234
  */
 const gchar *
 g_udev_device_get_sysfs_attr_uncached (GUdevDevice  *device,
                                        const gchar  *name)
 {
-  g_autofree char *path = NULL;
-  char *contents = NULL;
-
   g_return_val_if_fail (G_UDEV_IS_DEVICE (device), NULL);
   g_return_val_if_fail (name != NULL, NULL);
 
-  path = g_build_filename (udev_device_get_syspath (device->priv->udevice), name, NULL);
-  if (!g_file_get_contents (path, &contents, NULL, NULL))
-    return NULL;
-  g_hash_table_insert (device->priv->sysfs_attr, g_strdup (name), contents);
-
-  return contents;
+  udev_device_set_sysattr_value (device->priv->udevice, name, NULL);
+  return g_udev_device_get_sysfs_attr (device, name);
 }
 
 /**
@@ -1053,27 +1072,22 @@ g_udev_device_get_sysfs_attr_uncached (GUdevDevice  *device,
  * using strtol(). This function does blocking I/O, and updates the sysfs
  * attributes cache.
  *
+ * Before version 238 the uncached getters would not strip trailing newlines.
+ *
  * Returns: The value of the sysfs attribute or 0 if there is no such
  * attribute.
+ *
+ * Since: 234
  */
 gint
 g_udev_device_get_sysfs_attr_as_int_uncached (GUdevDevice  *device,
                                               const gchar  *name)
 {
-  gint result;
-  const gchar *s;
-
   g_return_val_if_fail (G_UDEV_IS_DEVICE (device), 0);
   g_return_val_if_fail (name != NULL, 0);
 
-  result = 0;
-  s = g_udev_device_get_sysfs_attr_uncached (device, name);
-  if (s == NULL)
-    goto out;
-
-  result = strtol (s, NULL, 0);
-out:
-  return result;
+  udev_device_set_sysattr_value (device->priv->udevice, name, NULL);
+  return g_udev_device_get_sysfs_attr_as_int (device, name);
 }
 
 /**
@@ -1085,27 +1099,22 @@ out:
  * 64-bit integer using g_ascii_strtoull(). This function does blocking I/O, and
  * updates the sysfs attributes cache.
  *
+ * Before version 238 the uncached getters would not strip trailing newlines.
+ *
  * Returns: The value of the sysfs attribute or 0 if there is no such
  * attribute.
+ *
+ * Since: 234
  */
 guint64
 g_udev_device_get_sysfs_attr_as_uint64_uncached (GUdevDevice  *device,
                                                  const gchar  *name)
 {
-  guint64 result;
-  const gchar *s;
-
   g_return_val_if_fail (G_UDEV_IS_DEVICE (device), 0);
   g_return_val_if_fail (name != NULL, 0);
 
-  result = 0;
-  s = g_udev_device_get_sysfs_attr_uncached (device, name);
-  if (s == NULL)
-    goto out;
-
-  result = g_ascii_strtoull (s, NULL, 0);
-out:
-  return result;
+  udev_device_set_sysattr_value (device->priv->udevice, name, NULL);
+  return g_udev_device_get_sysfs_attr_as_uint64 (device, name);
 }
 
 /**
@@ -1117,27 +1126,22 @@ out:
  * precision floating point number using g_ascii_strtod(). This function does blocking
  * I/O, and updates the sysfs attributes cache.
  *
+ * Before version 238 the uncached getters would not strip trailing newlines.
+ *
  * Returns: The value of the sysfs attribute or 0.0 if there is no such
  * attribute.
+ *
+ * Since: 234
  */
 gdouble
 g_udev_device_get_sysfs_attr_as_double_uncached (GUdevDevice  *device,
                                                  const gchar  *name)
 {
-  gdouble result;
-  const gchar *s;
-
   g_return_val_if_fail (G_UDEV_IS_DEVICE (device), 0.0);
   g_return_val_if_fail (name != NULL, 0.0);
 
-  result = 0.0;
-  s = g_udev_device_get_sysfs_attr_uncached (device, name);
-  if (s == NULL)
-    goto out;
-
-  result = g_ascii_strtod (s, NULL);
-out:
-  return result;
+  udev_device_set_sysattr_value (device->priv->udevice, name, NULL);
+  return g_udev_device_get_sysfs_attr_as_double (device, name);
 }
 
 /**
@@ -1150,36 +1154,22 @@ out:
  * on the string value against "1", "true", "Y" and "y". This function does
  * blocking I/O, and updates the sysfs attributes cache.
  *
+ * Before version 238 the uncached getters would not strip trailing newlines.
+ *
  * Returns: The value of the sysfs attribute or %FALSE if there is no such
  * attribute.
+ *
+ * Since: 234
  */
 gboolean
 g_udev_device_get_sysfs_attr_as_boolean_uncached (GUdevDevice  *device,
                                                   const gchar  *name)
 {
-  gboolean result;
-  const gchar *raw;
-  g_autofree char *truncated = NULL;
-  const char *s;
-
   g_return_val_if_fail (G_UDEV_IS_DEVICE (device), FALSE);
   g_return_val_if_fail (name != NULL, FALSE);
 
-  result = FALSE;
-  raw = g_udev_device_get_sysfs_attr_uncached (device, name);
-  if (raw == NULL)
-    goto out;
-
-  truncated = truncate_at_linefeed (raw);
-  s = truncated ?: raw;
-  if (strcmp (s, "1") == 0 ||
-      g_ascii_strcasecmp (s, "true") == 0 ||
-      g_ascii_strcasecmp (s, "y") == 0) {
-    result = TRUE;
-  }
-
- out:
-  return result;
+  udev_device_set_sysattr_value (device->priv->udevice, name, NULL);
+  return g_udev_device_get_sysfs_attr_as_boolean (device, name);
 }
 
 /**
@@ -1199,32 +1189,22 @@ g_udev_device_get_sysfs_attr_as_boolean_uncached (GUdevDevice  *device,
  * The value of the sysfs attribute split into tokens or %NULL if
  * there is no such attribute. This array is owned by @device and
  * should not be freed by the caller.
+ *
+ * Before version 238 the uncached getters would not strip trailing newlines.
+ *
+ * Since: 234
  */
 const gchar * const *
 g_udev_device_get_sysfs_attr_as_strv_uncached (GUdevDevice  *device,
                                                const gchar  *name)
 {
-  gchar **result;
-  const gchar *s;
-
   g_return_val_if_fail (G_UDEV_IS_DEVICE (device), NULL);
   g_return_val_if_fail (name != NULL, NULL);
 
-  result = NULL;
-  s = g_udev_device_get_sysfs_attr_uncached (device, name);
-  if (s == NULL)
-    goto out;
+  g_hash_table_remove (device->priv->sysfs_attr_strvs, name);
 
-  result = split_at_whitespace (s);
-  if (result == NULL)
-    goto out;
-
-  if (device->priv->sysfs_attr_strvs == NULL)
-    device->priv->sysfs_attr_strvs = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, (GDestroyNotify) g_strfreev);
-  g_hash_table_insert (device->priv->sysfs_attr_strvs, g_strdup (name), result);
-
-out:
-  return (const gchar* const *) result;
+  udev_device_set_sysattr_value (device->priv->udevice, name, NULL);
+  return g_udev_device_get_sysfs_attr_as_strv (device, name);
 }
 
 /**
@@ -1240,24 +1220,29 @@ out:
 const gchar* const *
 g_udev_device_get_tags (GUdevDevice  *device)
 {
-  struct udev_list_entry *l;
-  GPtrArray *p;
-
   g_return_val_if_fail (G_UDEV_IS_DEVICE (device), NULL);
 
-  if (device->priv->tags != NULL)
-    goto out;
-
-  p = g_ptr_array_new ();
-  for (l = udev_device_get_tags_list_entry (device->priv->udevice); l != NULL; l = udev_list_entry_get_next (l))
-    {
-      g_ptr_array_add (p, g_strdup (udev_list_entry_get_name (l)));
-    }
-  g_ptr_array_add (p, NULL);
-  device->priv->tags = (gchar **) g_ptr_array_free (p, FALSE);
-
- out:
   return (const gchar * const *) device->priv->tags;
+}
+
+/**
+ * g_udev_device_get_current_tags:
+ * @device: A #GUdevDevice.
+ *
+ * Gets all current tags for @device.
+ *
+ * https://www.freedesktop.org/software/systemd/man/udev_device_has_current_tag.html
+ *
+ * Returns: (transfer none) (array zero-terminated=1) (element-type utf8): A %NULL terminated string array of current tags. This array is owned by @device and should not be freed by the caller.
+ *
+ * Since: 238
+ */
+const gchar* const *
+g_udev_device_get_current_tags (GUdevDevice *device)
+{
+  g_return_val_if_fail (G_UDEV_IS_DEVICE (device), NULL);
+
+  return (const gchar * const *) device->priv->current_tags;
 }
 
 /**
