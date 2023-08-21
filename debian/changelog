@@ -1,3 +1,28 @@
+libgudev (238-2deepin1) unstable; urgency=medium
+
+  * libumockdev-dev (>= 0.17.18) is required to build the tests
+
+ -- xiangzelong <xiangzelong@deepin.org>  Fri, 27 Oct 2023 09:27:36 +0800
+
+libgudev (238-2) unstable; urgency=medium
+
+  * Release to unstable
+
+ -- Jeremy Bícha <jbicha@ubuntu.com>  Fri, 21 Jul 2023 13:13:29 -0400
+
+libgudev (238-1) experimental; urgency=medium
+
+  [ Jeremy Bícha ]
+  * New upstream release
+  * debian/control.in: Set minimum udev to 251
+  * debian/libgudev-1.0-0.symbols: Add new symbol
+  * Update standards version to 4.6.2, no changes needed
+
+  [ Michael Biebl ]
+  * Set Rules-Requires-Root: no
+
+ -- Jeremy Bícha <jbicha@ubuntu.com>  Thu, 06 Jul 2023 09:11:18 -0400
+
 libgudev (237-2) unstable; urgency=medium
 
   * Add Depends on libudev-dev (>= 199) to libgudev-1.0-dev.

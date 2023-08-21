@@ -16,18 +16,32 @@
 
 #include <gudev/gudev.h>
 
+#define GNU_SKIP_RETURNCODE 77
+
+typedef struct {
+	UMockdevTestbed *testbed;
+} Fixture;
+
 static void
-test_double (void)
+fixture_setup (Fixture *f, G_GNUC_UNUSED const void *data)
 {
-	/* create test bed */
-	UMockdevTestbed *testbed = umockdev_testbed_new ();
+	f->testbed = umockdev_testbed_new ();
 
-	/* Relies on a test bed having been set up */
 	g_assert (umockdev_in_mock_environment ());
+}
 
+static void
+fixture_teardown (Fixture *f, G_GNUC_UNUSED const void *data)
+{
+	g_clear_object (&f->testbed);
+}
+
+static void
+test_double (Fixture *f, G_GNUC_UNUSED const void *data)
+{
 	g_assert_cmpstr (nl_langinfo(RADIXCHAR), ==, ",");
 
-	umockdev_testbed_add_device (testbed, "platform", "dev1", NULL,
+	umockdev_testbed_add_device (f->testbed, "platform", "dev1", NULL,
 				     "in_accel_scale", "0.0000098", NULL,
 				     "ID_MODEL", "KoolGadget", "SCALE", "0.0000098", NULL);
 
@@ -54,10 +68,17 @@ test_double (void)
 int main(int argc, char **argv)
 {
 	setlocale (LC_ALL, NULL);
-	setlocale (LC_NUMERIC, "fr_FR.UTF-8");
+
+	/* Skip if locale is unavailable */
+	if (setlocale (LC_NUMERIC, "fr_FR.UTF-8") == NULL)
+		return GNU_SKIP_RETURNCODE;
+
 	g_test_init (&argc, &argv, NULL);
 
-	g_test_add_func ("/gudev/double", test_double);
+	g_test_add ("/gudev/double", Fixture, NULL,
+	            fixture_setup,
+	            test_double,
+	            fixture_teardown);
 
 	return g_test_run ();
 }
