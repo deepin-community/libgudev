@@ -1,8 +1,40 @@
-libgudev (238-2deepin1) unstable; urgency=medium
+libgudev (238-6) unstable; urgency=medium
 
-  * libumockdev-dev (>= 0.17.18) is required to build the tests
+  * Bump Standards Version to 4.7.0
 
- -- xiangzelong <xiangzelong@deepin.org>  Fri, 27 Oct 2023 09:27:36 +0800
+ -- Jeremy Bícha <jbicha@ubuntu.com>  Thu, 09 Jan 2025 10:16:10 -0900
+
+libgudev (238-5) unstable; urgency=medium
+
+  * Revert "Set nocheck buildprofile for 32-bit architectures to avoid umockdev"
+
+ -- Jeremy Bícha <jbicha@ubuntu.com>  Sun, 24 Mar 2024 12:13:15 -0400
+
+libgudev (238-4) unstable; urgency=medium
+
+  * Set nocheck buildprofile for 32-bit architectures to avoid umockdev
+    dependency loop
+
+ -- Jeremy Bícha <jbicha@ubuntu.com>  Thu, 21 Mar 2024 09:53:09 -0400
+
+libgudev (238-3) unstable; urgency=medium
+
+  * Team upload
+
+  [ Amin Bandali ]
+  * Change packaging branch to debian/latest
+
+  [ Simon McVittie ]
+  * d/control: Stop generating from control.in
+  * d/control: Add ${gir:Depends} to -dev package
+  * d/control: Add ${gir:Provides} to -dev package.
+    This will give it Provides: gir1.2-gudev-1.0-dev which libmanette can
+    build-depend on, in preparation for potentially moving some or all
+    GIR XML to its own binary packages in future to help with
+    cross-compilation and bootstrapping. (Helps: #1030223)
+  * d/rules: Use /usr/share/dpkg/default.mk instead of dpkg-parsechangelog
+
+ -- Simon McVittie <smcv@debian.org>  Tue, 14 Nov 2023 12:09:23 +0000
 
 libgudev (238-2) unstable; urgency=medium
 
