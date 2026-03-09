@@ -2,8 +2,9 @@
 
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 export DEB_LDFLAGS_MAINT_APPEND = -Wl,-z,defs -Wl,-O1
+export DPKG_GENSYMBOLS_CHECK_LEVEL = 4
 
-VERSION = $(shell dpkg-parsechangelog | sed -n -e '/^Version:/s/.*: //p')
+include /usr/share/dpkg/default.mk
 
 %:
 	dh $@
@@ -20,13 +21,12 @@ override_dh_auto_configure:
 		-Dintrospection=enabled \
 		$(CONFFLAGS)
 
-override_dh_makeshlibs:
-	dh_makeshlibs -- -c4
-
 override_dh_gencontrol:
 	# Ubuntu has an epoch on gudev
 	if dpkg-vendor --is ubuntu; then \
-		dh_gencontrol -- "-v1:$(VERSION)"; \
+		dh_gencontrol -- "-v1:$(DEB_VERSION)"; \
 	else \
 		dh_gencontrol; \
 	fi
+
+override_dh_gnome_clean:
